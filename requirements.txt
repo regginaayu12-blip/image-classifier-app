@@ -1,5 +1,7 @@
 streamlit
 tensorflow
 numpy
-pillow
-gdown
+Pillow
+gdown>=5.1.0
+pandas
+h5py
