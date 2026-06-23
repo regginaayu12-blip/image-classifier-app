@@ -8,6 +8,8 @@ import os
 import zipfile
 import pandas as pd
 import shutil
+import h5py
+import json
 
 st.set_page_config(page_title="Image Classification Batch", layout="centered")
 
@@ -15,11 +17,11 @@ st.title("Klasifikasi Gambar Buah (Batch .zip)")
 
 # 1. Input Link Berbagi Google Drive
 drive_url = st.text_input(
-    "https://drive.google.com/file/d/1WMygo7545PJmH6o0eLl3vglM3NEfF_T9/view?usp=drive_link",
+    "https://drive.google.com/file/d/1WMygo7545PJmH6o0eLl3vglM3NEfF_T9/view?usp=drive_link:",
     placeholder="https://drive.google.com/file/d/XXXXX/view?usp=sharing"
 )
 
-# 2. Mengubah input menjadi file .zip
+# 2. Input File .zip
 uploaded_zip = st.file_uploader("Upload file gambar dalam format (.zip)", type=["zip"])
 
 img_size = (277, 277)
@@ -28,7 +30,37 @@ class_names_text = st.text_input(
     value="anggur,buah naga"
 )
 
-# Fungsi untuk mengunduh model
+# Fungsi khusus untuk membersihkan error 'quantization_config' langsung dari dalam file .h5
+def fix_h5_quantization_error(filepath):
+    try:
+        with h5py.File(filepath, "r+") as f:
+            if "model_config" in f.attrs:
+                config_data = f.attrs["model_config"]
+                # Jika dalam bentuk bytes, decode ke string
+                if isinstance(config_data, bytes):
+                    config_data = config_data.decode("utf-8")
+                
+                # Hapus paksa parameter yang bikin error
+                if "quantization_config" in config_data:
+                    config_json = json.loads(config_data)
+                    
+                    # Fungsi rekursif untuk mencari dan menghapus 'quantization_config'
+                    def remove_quant_key(layer_dict):
+                        if isinstance(layer_dict, dict):
+                            layer_dict.pop("quantization_config", None)
+                            for k, v in layer_dict.items():
+                                remove_quant_key(v)
+                        elif isinstance(layer_dict, list):
+                            for item in layer_dict:
+                                remove_quant_key(item)
+                                
+                    remove_quant_key(config_json)
+                    # Tulis kembali config yang sudah bersih ke dalam file H5
+                    f.attrs["model_config"] = json.dumps(config_json).encode("utf-8")
+    except Exception as e:
+        st.warning(f"Catatan otomatisasi model (bisa diabaikan): {e}")
+
+# Fungsi untuk mengunduh dan memuat model
 @st.cache_resource
 def load_model_from_drive(url):
     output = "temp_model.h5"
@@ -40,11 +72,11 @@ def load_model_from_drive(url):
             file_id = gdown.download(url=url, output=output, quiet=False)
         
         if file_id and os.path.exists(output):
-            # Menambahkan compile=False dan custom_objects/safe_mode untuk meredam error Keras versi baru
-            try:
-                model = load_model(output, compile=False)
-            except Exception:
-                model = tf.keras.models.load_model(output, compile=False, safe_mode=False)
+            # Bersihkan file .h5 dari parameter pengganggu sebelum di-load
+            fix_h5_quantization_error(output)
+            
+            # Jalankan proses pemuatan model yang aman
+            model = load_model(output, compile=False)
             return model
         else:
             st.error("Gagal mengunduh file. Pastikan link Google Drive valid.")
@@ -84,14 +116,12 @@ if drive_url and uploaded_zip:
         else:
             st.info(f"Berhasil menemukan {len(all_images)} gambar di dalam file ZIP. Memulai prediksi...")
             
-            # List untuk menampung hasil tabel ringkasan
             results = []
 
             # Melakukan prediksi untuk setiap gambar
             for img_path in all_images:
                 filename = os.path.basename(img_path)
                 try:
-                    # Membuka dan preprocess gambar
                     img = Image.open(img_path).convert("RGB")
                     img_resized = img.resize(img_size)
                     img_array = np.array(img_resized, dtype=np.float32)
@@ -101,7 +131,6 @@ if drive_url and uploaded_zip:
                     prediction = model.predict(img_array, verbose=0)
                     confidence = float(prediction[0][0])
 
-                    # Logika penentuan kelas
                     if confidence > 0.5:
                         label = class_names[1] if len(class_names) > 1 else "Kelas 2"
                         score = confidence * 100
@@ -128,7 +157,7 @@ if drive_url and uploaded_zip:
             df_results = pd.DataFrame(results)
             st.dataframe(df_results, use_container_width=True)
 
-            # Tampilkan gambar beserta hasil prediksinya satu-satu di bawah tabel (Opsional)
+            # Tampilkan gambar beserta hasil prediksinya satu-satu di bawah tabel
             st.subheader("🖼️ Detail Visual Gambar")
             for img_path, res in zip(all_images, results):
                 if res["Hasil Prediksi"] != "ERROR":
