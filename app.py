@@ -37,7 +37,7 @@ def load_model_from_drive(url):
         with st.spinner("Mengunduh model dari Google Drive... Mohon tunggu."):
             # Menggunakan gdown.download dengan mendeteksi URL secara otomatis
             # gdown akan mengonversi link berbagi menjadi link unduhan langsung
-            file_id = gdown.download(url=url, output=output, quiet=False, fuzzy=True)
+            file_id = gdown.download(url=url, output=output, quiet=False)
         
         if file_id and os.path.exists(output):
             model = load_model(output, compile=False)
